@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>IndexedDB Playground</title>
+</head>
+<body>
+
+<button id="startRecording">Start Recording</button>
+<button id="stopRecord">Stop Recording</button>
+<video id="videoPreview" autoplay="autoplay"></video>
+
+<div id="videolist"></div>
+
+<script>
+    const request = window.indexedDB.open("MyTestDatabase", 2);
+    let db;
+    request.onerror = function(ev) {
+        console.log("Access to DB was not allowed", ev);
+    };
+    request.onupgradeneeded = function(event) {
+        const db = event.target.result;
+        const videosStore = db.createObjectStore("videos", { autoIncrement: true, });
+        videosStore.createIndex("createdOn", "createdOn", { unique: false });
+    };
+    request.onsuccess = function(event) {
+        db = event.target.result;
+        refreshVideos();
+    };
+
+    const videoEl = document.querySelector("#videoPreview");
+    let recorder = null;
+    let chunks = [];
+    document.querySelector("#startRecording").addEventListener("click", async () => {
+        chunks = [];
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: true,
+            });
+            videoEl.srcObject = new MediaStream(stream.getVideoTracks());
+            recorder = new MediaRecorder(stream, {
+                mimeType: "video/webm",
+            });
+            recorder.addEventListener("dataavailable", (e) => {
+                chunks.push(e.data);
+            });
+            recorder.addEventListener("stop", () => {
+                const completed = new Blob(chunks, { "type" : 'video/webm' });
+
+                db.transaction(["videos"], "readwrite")
+                    .objectStore("videos")
+                    .add({
+                        createdOn: new Date(),
+                        videoData: completed,
+                    })
+                    .onsuccess = (ev) => {
+                        console.log("Added!");
+                        refreshVideos();
+                    };
+            });
+            recorder.start(250);
+        } catch(err) { }
+    });
+
+    document.querySelector("#stopRecord").addEventListener("click", () => {
+        recorder.stop();
+    });
+
+    function refreshVideos() {
+        const videoList = document.querySelector("#videolist");
+        videoList.innerHTML = "";
+        db.transaction(["videos"], "readwrite")
+            .objectStore("videos")
+            .getAll()
+            .onsuccess = function(event) {
+                const videos = event.target.result;
+                videos.forEach((o) => {
+                    const div = document.createElement("div");
+                    div.style = "cursor:pointer;";
+                    div.innerHTML = o.createdOn.toISOString();
+                    div.addEventListener("click", () => {
+                        videoEl.src = window.URL.createObjectURL(o.videoData);
+                    });
+                    videoList.appendChild(div);
+                });
+            };
+    }
+</script>
+</body>
+</html>
